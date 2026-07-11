@@ -549,7 +549,9 @@ def speak_with_qwen3_tts(text: str) -> None:
     try:
         from speech_to_speech.pipeline.messages import TTSInput
     except ImportError as exc:
-        raise SystemExit("Could not import the TTS message types from the repo.") from exc
+        print("Qwen3 TTS skipped: could not import the repo TTS message types.", flush=True)
+        print("Emotion phase will continue without spoken playback.", flush=True)
+        return
 
     stop_event = Event()
     queue_in: Queue[object] = Queue()
@@ -557,11 +559,13 @@ def speak_with_qwen3_tts(text: str) -> None:
     should_listen = Event()
     should_listen.set()
 
-    default_ref_audio = Path(__file__).resolve().parent.parent / "speech-to-speech-main" / "src" / "speech_to_speech" / "TTS" / "ref_audio.wav"
+    default_ref_audio = Path(__file__).resolve().with_name("ref_audio.wav")
     ref_audio = os.getenv("QWEN3_TTS_REF_AUDIO", str(default_ref_audio))
 
     if Qwen3TTSHandler is None:
-        raise SystemExit("Qwen 3 TTS is not available in this environment.")
+        print("Qwen3 TTS skipped: handler package is not available in this environment.", flush=True)
+        print("Emotion phase will continue without spoken playback.", flush=True)
+        return
 
     handler = Qwen3TTSHandler(
         stop_event,
