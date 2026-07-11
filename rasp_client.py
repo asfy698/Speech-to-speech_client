@@ -288,11 +288,12 @@ def main() -> None:
     bot_face_proc: subprocess.Popen | None = None
     status_window_proc: subprocess.Popen | None = None
     try:
-        _run_emotion_phase()
         if args.launch_bot_face:
             bot_face_proc = _launch_bot_face_gui()
         if args.launch_status_window:
             status_window_proc = _launch_status_window()
+
+        _run_emotion_phase()
 
         asyncio.run(run_client(args))
     except KeyboardInterrupt:
@@ -310,4 +311,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
