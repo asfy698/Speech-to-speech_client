@@ -1,4 +1,4 @@
-﻿#rasp_client
+#rasp_client
 from __future__ import annotations
 
 import argparse
@@ -30,13 +30,16 @@ def _launch_bot_face_gui() -> subprocess.Popen | None:
     return subprocess.Popen([sys.executable, str(bot_face)], cwd=ROOT)
 
 
-def _launch_status_window() -> subprocess.Popen | None:
+def _launch_status_window(stats_url: str | None = None) -> subprocess.Popen | None:
     status_window = ROOT / "status_window.py"
     if not status_window.exists():
         print(f"Status window not found: {status_window}", flush=True)
         return None
     print("\n=== Status Window ===", flush=True)
-    return subprocess.Popen([sys.executable, str(status_window)], cwd=ROOT)
+    env = os.environ.copy()
+    if stats_url:
+        env["S2S_REALTIME_STATS_URL"] = stats_url
+    return subprocess.Popen([sys.executable, str(status_window)], cwd=ROOT, env=env)
 
 
 def _run_emotion_phase() -> None:
@@ -71,6 +74,11 @@ def _append_query_param(url: str, key: str, value: str) -> str:
     query_items = dict(parse_qsl(parsed.query, keep_blank_values=True))
     query_items[key] = value
     return urlunparse(parsed._replace(query=urlencode(query_items)))
+
+
+def _stats_url_from_ws_url(websocket_url: str) -> str:
+    parsed = urlparse(websocket_url)
+    return urlunparse(parsed._replace(path="/v1/stats", query=""))
 
 
 def _make_websocket_url(args: PiClientArguments) -> str:
@@ -291,7 +299,7 @@ def main() -> None:
         if args.launch_bot_face:
             bot_face_proc = _launch_bot_face_gui()
         if args.launch_status_window:
-            status_window_proc = _launch_status_window()
+            status_window_proc = _launch_status_window(_stats_url_from_ws_url(_make_websocket_url(args)))
 
         _run_emotion_phase()
 
