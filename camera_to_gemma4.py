@@ -527,84 +527,32 @@ def send_whatsapp_alert(reply_text: str) -> bool:
         return False
 
 
-def _audio_bytes_from_tts_output(chunk: object) -> bytes:
-    """Convert a Qwen3-TTS output chunk to raw int16 PCM bytes."""
-    import numpy as np
-
-    if isinstance(chunk, (bytes, bytearray)):
-        return bytes(chunk)
-    array = np.asarray(chunk)
-    if array.dtype != np.int16:
-        array = np.clip(array * 32768, -32768, 32767).astype(np.int16)
-    return array.tobytes()
-
-
 def speak_with_qwen3_tts(text: str) -> None:
-    """Synthesize and play text using the best available repo TTS handler."""
-    try:
-        from speech_to_speech.TTS.qwen3_tts_handler import Qwen3TTSHandler
-    except ImportError:
-        Qwen3TTSHandler = None  # type: ignore[assignment]
+    """Speak text immediately using the fastest local engine available."""
+    for command in (
+        ["espeak-ng", "-v", "en", "-s", "165", text],
+        ["espeak", "-v", "en", "-s", "165", text],
+        ["spd-say", text],
+    ):
+        if not shutil.which(command[0]):
+            continue
+        try:
+            subprocess.run(command, check=False)
+            return
+        except Exception as exc:
+            print(f"Local TTS engine failed: {exc}", flush=True)
 
     try:
-        from speech_to_speech.pipeline.messages import TTSInput
-    except ImportError as exc:
-        print("Qwen3 TTS skipped: could not import the repo TTS message types.", flush=True)
-        print("Emotion phase will continue without spoken playback.", flush=True)
+        import pyttsx3
+
+        engine = pyttsx3.init()
+        engine.say(text)
+        engine.runAndWait()
         return
-
-    stop_event = Event()
-    queue_in: Queue[object] = Queue()
-    queue_out: Queue[object] = Queue()
-    should_listen = Event()
-    should_listen.set()
-
-    default_ref_audio = Path(__file__).resolve().with_name("ref_audio.wav")
-    ref_audio = os.getenv("QWEN3_TTS_REF_AUDIO", str(default_ref_audio))
-
-    if Qwen3TTSHandler is None:
-        print("Qwen3 TTS skipped: handler package is not available in this environment.", flush=True)
-        print("Emotion phase will continue without spoken playback.", flush=True)
-        return
-
-    handler = Qwen3TTSHandler(
-        stop_event,
-        queue_in=queue_in,  # type: ignore[arg-type]
-        queue_out=queue_out,  # type: ignore[arg-type]
-        setup_args=(should_listen,),
-        setup_kwargs={
-            "model_name": "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
-            "device": "cuda",
-            "dtype": "auto",
-            "ref_audio": ref_audio if ref_audio else None,
-            "speaker": "Aiden",
-        },
-    )
-
-    tts_input = TTSInput(text=text, language_code="en")
-    audio_pcm = bytearray()
-    for out in handler.process(tts_input):
-        audio_pcm.extend(_audio_bytes_from_tts_output(out))
-
-    handler.cleanup()
-    stop_event.set()
-
-    if not audio_pcm:
-        raise SystemExit("Qwen3 TTS produced no audio.")
-
-    wav_path = Path(__file__).resolve().with_name("gemma4_reply.wav")
-    with wave.open(str(wav_path), "wb") as wav_file:
-        wav_file.setnchannels(1)
-        wav_file.setsampwidth(2)
-        wav_file.setframerate(16000)
-        wav_file.writeframes(bytes(audio_pcm))
-
-    try:
-        import winsound
-
-        winsound.PlaySound(str(wav_path), winsound.SND_FILENAME | winsound.SND_SYNC)
     except Exception as exc:
-        raise SystemExit(f"Saved audio to {wav_path}, but playback failed: {exc}") from exc
+        print(f"pyttsx3 fallback failed: {exc}", flush=True)
+
+    print("No local TTS engine found. Reply is text-only.", flush=True)
 
 
 def main() -> int:
@@ -623,7 +571,7 @@ def main() -> int:
         if skip_tts:
             print("\nSkipping TTS and returning control to the launcher...\n")
             return 0
-        print("\nSpeaking reply with Qwen 3 TTS...\n")
+        print("\nSpeaking reply immediately...\n")
         speak_with_qwen3_tts(reply)
     else:
         print("\nGemma 4 returned an empty response.")
