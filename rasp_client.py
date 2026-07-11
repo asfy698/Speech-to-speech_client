@@ -14,6 +14,8 @@ from pathlib import Path
 from queue import Empty, Queue
 from threading import Event, Lock
 from typing import Any, Optional
+from urllib.error import URLError
+from urllib.request import urlopen
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 ROOT = Path(__file__).resolve().parent
@@ -68,6 +70,7 @@ class PiClientArguments:
     print_json: bool = field(default=False)
     launch_bot_face: bool = field(default=True)
     launch_status_window: bool = field(default=True)
+    esp32_base_url: Optional[str] = field(default_factory=lambda: os.getenv("ESP32_BASE_URL") or os.getenv("ESP32_IP"))
 
 
 def _append_query_param(url: str, key: str, value: str) -> str:
@@ -94,6 +97,35 @@ def _audio_bytes_from_ws_event(event: dict[str, Any]) -> bytes:
     return base64.b64decode(event.get("delta", ""))
 
 
+def _normalize_esp32_base_url(base_url: str | None) -> str | None:
+    if not base_url:
+        return None
+    value = base_url.strip().rstrip("/")
+    if not value:
+        return None
+    if value.startswith(("http://", "https://")):
+        return value
+    return f"http://{value}"
+
+
+def _movement_endpoint_from_text(text: str) -> tuple[str, str] | None:
+    lowered = text.lower()
+    if any(phrase in lowered for phrase in ("stop", "halt", "freeze")):
+        return "stop", "/stop"
+    if any(phrase in lowered for phrase in ("move forward", "go forward", "forward", "come forward")):
+        return "forward", "/forward"
+    if any(phrase in lowered for phrase in ("move backward", "go backward", "backward", "go back", "move back")):
+        return "backward", "/backward"
+    return None
+
+
+def _call_esp32(base_url: str, endpoint: str) -> str:
+    url = f"{base_url}{endpoint}"
+    with urlopen(url, timeout=5) as response:
+        body = response.read().decode("utf-8", errors="replace")
+        return f"{response.status} {body}".strip()
+
+
 def handle_face_state(_state: dict[str, Any]) -> None:
     # Intentionally lightweight: the bot face is shown by bot_face_gui.py.
     pass
@@ -118,6 +150,7 @@ async def run_client(args: PiClientArguments) -> None:
     stop_event = Event()
     playback_buffer = bytearray()
     playback_lock = Lock()
+    esp32_base_url = _normalize_esp32_base_url(args.esp32_base_url)
 
     def clear_playback_buffer() -> None:
         with playback_lock:
@@ -190,6 +223,17 @@ async def run_client(args: PiClientArguments) -> None:
                 transcript = str(event.get("transcript", "")).strip()
                 if transcript:
                     print(f"USER: {transcript}", flush=True)
+                    movement = _movement_endpoint_from_text(transcript)
+                    if movement is not None:
+                        action, endpoint = movement
+                        if not esp32_base_url:
+                            print("ESP32 move skipped: set ESP32_BASE_URL or ESP32_IP.", flush=True)
+                        else:
+                            try:
+                                result = await asyncio.to_thread(_call_esp32, esp32_base_url, endpoint)
+                                print(f"ESP32 {action}: {result}", flush=True)
+                            except (OSError, URLError, TimeoutError) as exc:
+                                print(f"ESP32 {action} failed: {exc}", flush=True)
             elif event_type == "response.created":
                 print("ASSISTANT: <response started>", flush=True)
             elif event_type == "response.output_audio.delta":
@@ -276,6 +320,7 @@ def main() -> None:
     parser.add_argument("--input-device", type=int, default=defaults.input_device)
     parser.add_argument("--output-device", type=int, default=defaults.output_device)
     parser.add_argument("--print-json", action="store_true", default=defaults.print_json)
+    parser.add_argument("--esp32-base-url", default=defaults.esp32_base_url)
     parser.add_argument("--no-bot-face", dest="launch_bot_face", action="store_false")
     parser.add_argument("--no-status-window", dest="launch_status_window", action="store_false")
     parser.set_defaults(launch_bot_face=defaults.launch_bot_face)
@@ -294,6 +339,7 @@ def main() -> None:
         print_json=namespace.print_json,
         launch_bot_face=namespace.launch_bot_face,
         launch_status_window=namespace.launch_status_window,
+        esp32_base_url=namespace.esp32_base_url,
     )
     bot_face_proc: subprocess.Popen | None = None
     status_window_proc: subprocess.Popen | None = None

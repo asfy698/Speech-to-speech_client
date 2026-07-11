@@ -6,6 +6,7 @@ import contextlib
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import wave
 from queue import Queue
@@ -13,11 +14,74 @@ from threading import Event
 from pathlib import Path
 
 from openai import OpenAI
-from PIL import Image
+
+
+def _camera_resolution() -> tuple[int, int]:
+    width = int(os.getenv("CAMERA_WIDTH", "640"))
+    height = int(os.getenv("CAMERA_HEIGHT", "480"))
+    return width, height
+
+
+def _jpeg_quality() -> int:
+    return max(1, min(100, int(os.getenv("CAMERA_JPEG_QUALITY", "70"))))
+
+
+def _show_preview_enabled() -> bool:
+    return os.getenv("CAMERA_SHOW_PREVIEW", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _preview_path() -> Path:
+    return Path(os.getenv("CAMERA_PREVIEW_PATH", str(Path(__file__).with_name("last_camera_frame.jpg"))))
+
+
+def launch_image_preview(jpeg_bytes: bytes) -> None:
+    if not _show_preview_enabled():
+        return
+
+    preview_path = _preview_path()
+    try:
+        preview_path.parent.mkdir(parents=True, exist_ok=True)
+        preview_path.write_bytes(jpeg_bytes)
+        subprocess.Popen(
+            [sys.executable, str(Path(__file__).resolve()), "--preview-image", str(preview_path)],
+            cwd=Path(__file__).resolve().parent,
+        )
+        print(f"Preview image opened: {preview_path}", flush=True)
+    except Exception as exc:
+        print(f"Camera preview skipped: {exc}", flush=True)
+
+
+def run_image_preview(image_path: str) -> int:
+    try:
+        import tkinter as tk
+        from PIL import Image, ImageTk
+    except Exception as exc:
+        print(f"Camera preview unavailable: {exc}", flush=True)
+        return 1
+
+    path = Path(image_path)
+    root = tk.Tk()
+    root.title(f"Image Sent To Gemma - {path.name}")
+    root.lift()
+    root.attributes("-topmost", True)
+    root.after(1000, lambda: root.attributes("-topmost", False))
+
+    image = Image.open(path)
+    image.thumbnail((900, 700))
+    photo = ImageTk.PhotoImage(image)
+
+    label = tk.Label(root, image=photo)
+    label.image = photo
+    label.pack(padx=10, pady=10)
+    tk.Label(root, text=str(path)).pack(padx=10, pady=(0, 10))
+
+    root.mainloop()
+    return 0
 
 
 def capture_photo(camera_index: int = 0, save_path: str | None = None) -> bytes:
     """Capture one frame from the webcam and return it as JPEG bytes."""
+    width, height = _camera_resolution()
     try:
         from picamera2 import Picamera2
     except ImportError:
@@ -30,7 +94,7 @@ def capture_photo(camera_index: int = 0, save_path: str | None = None) -> bytes:
             picam = Picamera2()
 
         try:
-            config = picam.create_still_configuration()
+            config = picam.create_still_configuration(main={"size": (width, height)})
             picam.configure(config)
             picam.start()
             with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
@@ -57,11 +121,14 @@ def capture_photo(camera_index: int = 0, save_path: str | None = None) -> bytes:
         cap = cv2.VideoCapture(camera_index)
         if cap.isOpened():
             try:
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
                 ok, frame = cap.read()
                 if not ok or frame is None:
                     raise SystemExit("Could not read a frame from the camera.")
 
-                success, encoded = cv2.imencode(".jpg", frame)
+                encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), _jpeg_quality()]
+                success, encoded = cv2.imencode(".jpg", frame, encode_params)
                 if not success:
                     raise SystemExit("Could not encode the camera frame as JPEG.")
 
@@ -90,7 +157,11 @@ def capture_photo(camera_index: int = 0, save_path: str | None = None) -> bytes:
                 "--encoding",
                 "jpg",
                 "--quality",
-                "95",
+                str(_jpeg_quality()),
+                "--width",
+                str(width),
+                "--height",
+                str(height),
                 "-o",
                 str(image_path),
             ]
@@ -562,6 +633,7 @@ def main() -> int:
     skip_tts = os.getenv("CAMERA_SKIP_TTS", "").strip().lower() in {"1", "true", "yes", "on"}
 
     jpeg_bytes = capture_photo(camera_index=camera_index, save_path=save_path)
+    launch_image_preview(jpeg_bytes)
     print(f"Captured photo ({len(jpeg_bytes)} bytes). Sending to Gemma 4...")
 
     reply = call_gemma4_with_image(jpeg_bytes)
@@ -581,4 +653,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    if len(sys.argv) >= 3 and sys.argv[1] == "--preview-image":
+        raise SystemExit(run_image_preview(sys.argv[2]))
     raise SystemExit(main())
