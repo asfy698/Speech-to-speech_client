@@ -90,8 +90,19 @@ def handle_face_state(_state: dict[str, Any]) -> None:
 
 
 async def run_client(args: PiClientArguments) -> None:
-    import sounddevice as sd
-    import websockets
+    try:
+        import sounddevice as sd
+    except ModuleNotFoundError as exc:
+        raise SystemExit(
+            "Missing dependency: sounddevice. Run `uv sync` in the client folder first."
+        ) from exc
+
+    try:
+        import websockets
+    except ModuleNotFoundError as exc:
+        raise SystemExit(
+            "Missing dependency: websockets. Run `uv sync` in the client folder first."
+        ) from exc
 
     mic_queue: Queue[bytes] = Queue(maxsize=128)
     stop_event = Event()
@@ -299,5 +310,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
 
