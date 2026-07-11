@@ -12,7 +12,7 @@ import tkinter as tk
 from tkinter import ttk
 
 APP_TITLE = "Speech to Speech Status"
-DEFAULT_STATS_URL = os.environ.get("S2S_REALTIME_STATS_URL", "http://127.0.0.1:8765/v1/stats")
+DEFAULT_STATS_URL = os.environ.get("S2S_REALTIME_STATS_URL", "http://192.168.1.7:8765/v1/stats")
 POLL_INTERVAL_MS = 1000
 
 
