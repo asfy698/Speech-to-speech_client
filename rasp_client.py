@@ -39,6 +39,7 @@ def _launch_status_window(stats_url: str | None = None) -> subprocess.Popen | No
     env = os.environ.copy()
     if stats_url:
         env["S2S_REALTIME_STATS_URL"] = stats_url
+        print(f"Status URL: {stats_url}", flush=True)
     return subprocess.Popen([sys.executable, str(status_window)], cwd=ROOT, env=env)
 
 
@@ -78,7 +79,8 @@ def _append_query_param(url: str, key: str, value: str) -> str:
 
 def _stats_url_from_ws_url(websocket_url: str) -> str:
     parsed = urlparse(websocket_url)
-    return urlunparse(parsed._replace(path="/v1/stats", query=""))
+    scheme = "https" if parsed.scheme == "wss" else "http"
+    return urlunparse(parsed._replace(scheme=scheme, path="/v1/stats", query=""))
 
 
 def _make_websocket_url(args: PiClientArguments) -> str:
